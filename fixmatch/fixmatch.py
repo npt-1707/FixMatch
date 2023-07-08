@@ -4,6 +4,7 @@ from torch.optim import SGD
 from torch.nn import CrossEntropyLoss
 from torch.utils.data import RandomSampler, BatchSampler, DataLoader
 from torch.optim.lr_scheduler import LambdaLR
+from torchvision.models import resnet50, ResNet50_Weights
 
 from fixmatch.dataset import get_cifar10, get_cifar100, get_svhn, get_stl10
 from model.resnet import ResNet50
@@ -35,13 +36,16 @@ def get_dataloader(args):
     return labeled_loader, unlabeled_loader, valid_loader, test_loader
 
 def get_model(args):
-    model = {
-        "cifar10": ResNet50(10),
-        "cifar100": ResNet50(100),
-        "svhn": ResNet50(10),
-        "stl10": ResNet50(10),
+    out_features = {
+        "cifar10": 10,
+        "cifar100": 100,
+        "svhn": 10,
+        "stl10": 10,
     }
-    return model[args.dataset]
+    model = resnet50(weights=ResNet50_Weights.DEFAULT)
+    num_features = model.fc.in_features
+    model.fc = torch.nn.Linear(num_features, out_features)
+    return model
 
 def get_cosine_schedule_with_warmup(optimizer,
                                     num_warmup_steps,
@@ -184,3 +188,6 @@ class FixMatch:
         acc = correct / total
         total_loss /= len(self.test_dataloader)
         logging.info(f"Accuracy: {acc:.6f} - Loss: {total_loss:.6f}")
+            
+    def save(self, path):
+        torch.save(self.best_model, path)
