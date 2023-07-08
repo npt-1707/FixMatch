@@ -27,74 +27,84 @@ def calculate_mean_std(dataset):
     return mean, std
 
 
-def split_label_unlabel(labels, num_label, num_classes):
+def split_label_unlabel_valid(labels, num_label, num_classes):
     labels_per_class = num_label // num_classes
     labeled_idx = []
     unlabeled_idx = []
+    valid_idx = []
     for i in range(num_classes):
         idx = np.where(np.array(labels) == i)[0]
         np.random.shuffle(idx)
         labeled_idx.extend(idx[:labels_per_class])
-        unlabeled_idx.extend(idx[labels_per_class:])
-    return labeled_idx, unlabeled_idx
+        valid_idx.extend(idx[labels_per_class:100+labels_per_class])
+        unlabeled_idx.extend(idx[labels_per_class+100:])
+    return labeled_idx, unlabeled_idx, valid_idx
 
 def one_hot(label, num_classes):
     return np.eye(num_classes)[label]
 
 def get_cifar10(num_label):
     trainset = torchvision.datasets.CIFAR10(root='data', train=True, download=True)
-    labeled_idx, unlabeled_idx = split_label_unlabel(trainset.targets, num_label, 10)
+    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.targets, num_label, 10)
     
-    train_labeled_dataset = CIFAR10SSL(root="data", indexs=labeled_idx, train=True)
+    train_labeled_dataset = CIFAR10SSL(root="data", indexs=labeled_idx)
 
     train_unlabeled_dataset = CIFAR10SSL(root="data", indexs=unlabeled_idx, train=True, is_labeled=False)
     
+    valid_dataset = CIFAR10SSL(root="data", indexs=valid_idx, is_valid=True)
+    
     test_dataset = CIFAR10SSL(root='data', train=False)
     
-    return train_labeled_dataset, train_unlabeled_dataset, test_dataset
+    return train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset
 
 def get_cifar100(num_label):
     
     trainset = torchvision.datasets.CIFAR100(root='data', train=True, download=True)
-    labeled_idx, unlabeled_idx = split_label_unlabel(trainset.targets, num_label, 100)
+    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.targets, num_label, 100)
     
     train_labeled_dataset = CIFAR100SSL(root="data", indexs=labeled_idx)
 
     train_unlabeled_dataset = CIFAR100SSL( root="data", indexs=unlabeled_idx, is_labeled=False)
     
+    valid_dataset = CIFAR10SSL(root="data", indexs=valid_idx, is_valid=True)
+    
     test_dataset = CIFAR100SSL(root='data', train=False)
     
-    return train_labeled_dataset, train_unlabeled_dataset, test_dataset
+    return train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset
 
 def get_svhn(num_label):    
     trainset = torchvision.datasets.SHVN(root='data', split="train", download=True)
-    labeled_idx, unlabeled_idx = split_label_unlabel(trainset.labels, num_label, 10)
+    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.labels, num_label, 10)
     
     train_labeled_dataset = SVHNSSL( root="data", indexs=labeled_idx)
 
-    train_unlabeled_dataset = SVHNSSL( root="data", indexs=unlabeled_idx, is_labeled=False)
+    train_unlabeled_dataset = SVHNSSL(root="data", indexs=unlabeled_idx, is_labeled=False)
+    
+    valid_dataset = CIFAR10SSL(root="data", indexs=valid_idx, is_valid=True)
     
     test_dataset = SVHNSSL(root='data', split="test")
     
-    return train_labeled_dataset, train_unlabeled_dataset, test_dataset
+    return train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset
 
 def get_stl10(fold=0):
     train_labeled_dataset = STL10SSL(root='data', folds=fold)
     
     train_unlabeled_dataset = STL10SSL(root='data', split="unlabeled")
     
+    valid_dataset = STL10SSL(root='data', folds=(fold+1)%10)
+    
     test_dataset = STL10SSL(root='data', split="test")
     
-    return train_labeled_dataset, train_unlabeled_dataset, test_dataset
+    return train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset
 
 class CIFAR10SSL(datasets.CIFAR10):
-    def __init__(self, root, indexs=None, train=True, download=True, is_labeled=True):
+    def __init__(self, root, indexs=None, train=True, download=True, is_labeled=True, is_valid=False):
         super().__init__(root, train=train, download=download)
         if indexs is not None:
             self.data = self.data[indexs]
             self.targets = np.array(self.targets)[indexs]
         self.is_labeled = is_labeled
-        
+        self.is_valid = is_valid
         mean = [0.4914, 0.4822, 0.4465]
         std = [0.2470 , 0.2435, 0.2616]
         
@@ -120,7 +130,7 @@ class CIFAR10SSL(datasets.CIFAR10):
         img, target = self.data[index], self.targets[index]
         img = Image.fromarray(img)
 
-        if not self.train:
+        if not self.train or self.is_valid:
             return self.normalize(img), one_hot(target, 10)
         
         weak = self.weak(img)
@@ -133,12 +143,14 @@ class CIFAR10SSL(datasets.CIFAR10):
 
 
 class CIFAR100SSL(datasets.CIFAR100):
-    def __init__(self, root, indexs=None, train=True, download=True, is_labeled=True):
+    def __init__(self, root, indexs=None, train=True, download=True, is_labeled=True, is_valid=False):
         super().__init__(root, train=train, download=download)
         if indexs is not None:
             self.data = self.data[indexs]
             self.targets = np.array(self.targets)[indexs]
-
+        self.is_labeled = is_labeled
+        self.is_valid = is_valid
+        
         mean = [0.5071, 0.4865, 0.4409]
         std = [0.2673, 0.2564, 0.2762]
         
@@ -164,7 +176,7 @@ class CIFAR100SSL(datasets.CIFAR100):
         img, target = self.data[index], self.targets[index]
         img = Image.fromarray(img)
         
-        if not self.train:
+        if not self.train or self.is_valid:
             return self.normalize(img), one_hot(target, 100)
 
         weak = self.weak(img)
@@ -176,12 +188,13 @@ class CIFAR100SSL(datasets.CIFAR100):
         return self.normalize(weak), self.normalize(strong)
     
 class SVHNSSL(datasets.SVHN):
-    def __init__(self, root, indexs=None, split="train", download=True):
+    def __init__(self, root, indexs=None, split="train", download=True, is_labeled=True, is_valid=False):
         super().__init__(root, split=split, download=download)
         if indexs is not None:
             self.data = self.data[indexs]
             self.labels = np.array(self.labels)[indexs]
-            
+        self.is_label = is_labeled
+        self.is_valid = is_valid
         mean = [0.4409, 0.4279, 0.3868]
         std = [0.2683, 0.261 , 0.2687]
         
@@ -205,7 +218,7 @@ class SVHNSSL(datasets.SVHN):
         img, target = self.data[index], self.labels[index]
         img = Image.fromarray(img)
 
-        if self.split == "test":
+        if self.split == "test" or self.is_valid:
             return self.normalize(img), one_hot(target, 10)
         
         weak = self.weak(img)

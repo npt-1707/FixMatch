@@ -19,9 +19,9 @@ def get_dataloader(args):
     }
     assert args.dataset in get_dataset.keys(), "Dataset must be in {}".format(get_dataset.keys())
     if args.num_labels:
-        train_labeled_dataset, train_unlabeled_dataset, test_dataset = get_dataset[args.dataset](args.num_labels)
+        train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset = get_dataset[args.dataset](args.num_labels)
     elif args.fold:
-        train_labeled_dataset, train_unlabeled_dataset, test_dataset = get_dataset[args.dataset](args.fold)
+        train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset = get_dataset[args.dataset](args.fold)
         
     labeled_sampler = RandomSampler(train_labeled_dataset, replacement=True, num_samples=len(train_unlabeled_dataset)//args.uratio)
     unlabeled_sampler = RandomSampler(train_unlabeled_dataset)
@@ -29,9 +29,10 @@ def get_dataloader(args):
     unlabeled_batch_sampler = BatchSampler(unlabeled_sampler, args.batch_size*args.uratio, drop_last=True)
     labeled_loader = DataLoader(train_labeled_dataset, batch_sampler=labeled_batch_sampler, num_workers=args.num_workers)
     unlabeled_loader = DataLoader(train_unlabeled_dataset, batch_sampler=unlabeled_batch_sampler, num_workers=args.num_workers)
-    test_loader = DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=args.num_workers)
+    valid_loader = DataLoader(valid_dataset, batch_size=args.batch_size*args.uratio, shuffle=False, num_workers=args.num_workers)
+    test_loader = DataLoader(test_dataset, batch_size=args.batch_size*args.uratio, shuffle=False, num_workers=args.num_workers)
     
-    return labeled_loader, unlabeled_loader, test_loader
+    return labeled_loader, unlabeled_loader, valid_loader, test_loader
 
 def get_model(args):
     model = {
@@ -60,7 +61,7 @@ class FixMatch:
     def __init__(self, args):
         self.args = args
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.train_label_dataloader, self.train_unlabel_dataloader, self.test_dataloader = get_dataloader(args)
+        self.train_label_dataloader, self.train_unlabel_dataloader, self.valid_dataloader, self.test_dataloader = get_dataloader(args)
         assert len(self.train_label_dataloader) == len(self.train_unlabel_dataloader), f"Number of labeled and unlabeled dataloader must be equal. Got {len(self.train_label_dataloader)} {len(self.train_unlabel_dataloader)}"
         self.model = get_model(args).to(self.device)
         self.optimizer = SGD(self.model.parameters(), lr=args.lr, momentum=args.momentum, weight_decay=args.wd, nesterov=args.nesterov)
@@ -77,8 +78,9 @@ class FixMatch:
     def train(self):
         logging.basicConfig(filename='save/training.log', level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
         logging.info("Start training")
-        save_loss = []
-        checkpoints = os.listdir("save")
+        self.train_loss = []
+        self.valid_loss = []
+        checkpoints = [x for x in os.listdir("save") if "checkpoint" in x]
         if len(checkpoints) > 0:
             checkpoints = sorted(checkpoints, key=lambda x: int(x.split("_")[-1].split(".")[0]))
             checkpoint = checkpoints[-1]
@@ -90,7 +92,8 @@ class FixMatch:
             self.best_acc = checkpoint["acc"]
             self.best_model = checkpoint["model"]
             self.epoch = checkpoint["epoch"]
-            save_loss = checkpoint["loss"]
+            self.train_loss = checkpoint["train_loss"]
+            self.valid_loss = checkpoint["valid_loss"]
         size = len(self.train_label_dataloader)
         for epoch in range(self.epoch, self.args.epochs):
             logging.info(f"Epoch {epoch+1}/{self.args.epochs}")
@@ -119,9 +122,10 @@ class FixMatch:
                 self.optimizer.step()
                 self.ema_model.update(self.model)
                 self.scheduler.step()
-            save_loss.append([sum(total_loss)/len(total_loss), sum(label_loss)/len(label_loss), sum(pseudo_loss)/len(pseudo_loss)])
-            if (epoch+1) % 30 == 0:
-                self.test()
+            if (epoch+1) % 1 == 0 or epoch == self.args.epochs-1:
+                self.train_loss.append(sum(total_loss)/len(total_loss))
+                self.valid_loss.append(self.validate())
+            if (epoch+1) % 50 == 0 or epoch == self.args.epochs-1:
                 save = {
                     "model": self.model.state_dict(),
                     "ema": self.ema_model.ema.state_dict(),
@@ -130,12 +134,38 @@ class FixMatch:
                     "epoch": epoch,
                     "best_acc": self.best_acc,
                     "best_model": self.best_model.state_dict(),
-                    "loss": save_loss
+                    "train_loss": self.train_loss,
+                    "valid_loss": self.valid_loss,
                 }
                 torch.save(save, self.save_path.format(epoch))
+            if epoch == self.args.epochs-1:
+                self.test()
         logging.info('Training completed.')
         logging.shutdown()
-        
+    
+    def validate(self):
+        logging.info("Validating")
+        self.ema_model.ema.eval()
+        correct = 0
+        total = 0
+        total_loss = 0
+        with torch.no_grad():
+            for img, label in self.valid_dataloader:
+                img, label = img.to(self.device), label.to(self.device)
+                logit = self.ema_model.ema(img)
+                _, pred = torch.max(logit, dim=1)
+                loss = self.criterion(logit, label)
+                total_loss += loss.item()
+                correct += (pred == torch.max(label, dim=1)[1]).sum().item()
+                total += len(label)
+        acc = correct / total
+        total_loss /= len(self.test_dataloader)
+        logging.info(f"Accuracy: {acc:.6f} - Loss: {total_loss:.6f}")
+        if acc > self.best_acc:
+            self.best_acc = acc
+            self.best_model = self.model.state_dict()
+        return total_loss, acc
+      
     def test(self):
         logging.info("Testing")
         self.ema_model.ema.eval()
@@ -154,9 +184,3 @@ class FixMatch:
         acc = correct / total
         total_loss /= len(self.test_dataloader)
         logging.info(f"Accuracy: {acc:.6f} - Loss: {total_loss:.6f}")
-        if acc > self.best_acc:
-            self.best_acc = acc
-            self.best_model = self.model.state_dict()
-            
-    def save(self, path):
-        torch.save(self.best_model, path)
