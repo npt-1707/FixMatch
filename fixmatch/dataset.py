@@ -43,57 +43,56 @@ def split_label_unlabel_valid(labels, num_label, num_classes):
 def one_hot(label, num_classes):
     return np.eye(num_classes)[label]
 
-def get_cifar10(num_label):
-    trainset = torchvision.datasets.CIFAR10(root='data', train=True, download=True)
-    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.targets, num_label, 10)
+def get_cifar10(args):
+    trainset = torchvision.datasets.CIFAR10(root=args.root, train=True, download=True)
+    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.targets, args.num_labels, 10)
     
-    train_labeled_dataset = CIFAR10SSL(root="data", indexs=labeled_idx)
+    train_labeled_dataset = CIFAR10SSL(root=args.root, indexs=labeled_idx)
 
-    train_unlabeled_dataset = CIFAR10SSL(root="data", indexs=unlabeled_idx, train=True, is_labeled=False)
+    train_unlabeled_dataset = CIFAR10SSL(root=args.root, indexs=unlabeled_idx, train=True, is_labeled=False)
     
-    valid_dataset = CIFAR10SSL(root="data", indexs=valid_idx, is_valid=True)
+    valid_dataset = CIFAR10SSL(root=args.root, indexs=valid_idx, is_valid=True)
     
-    test_dataset = CIFAR10SSL(root='data', train=False)
+    test_dataset = CIFAR10SSL(root=args.root, train=False)
     
     return train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset
 
-def get_cifar100(num_label):
+def get_cifar100(args):
+    trainset = torchvision.datasets.CIFAR100(root=args.root, train=True, download=True)
+    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.targets, args.num_labels, 100)
     
-    trainset = torchvision.datasets.CIFAR100(root='data', train=True, download=True)
-    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.targets, num_label, 100)
-    
-    train_labeled_dataset = CIFAR100SSL(root="data", indexs=labeled_idx)
+    train_labeled_dataset = CIFAR100SSL(root=args.root, indexs=labeled_idx)
 
-    train_unlabeled_dataset = CIFAR100SSL( root="data", indexs=unlabeled_idx, is_labeled=False)
+    train_unlabeled_dataset = CIFAR100SSL( root=args.root, indexs=unlabeled_idx, is_labeled=False)
     
-    valid_dataset = CIFAR10SSL(root="data", indexs=valid_idx, is_valid=True)
+    valid_dataset = CIFAR10SSL(root=args.root, indexs=valid_idx, is_valid=True)
     
-    test_dataset = CIFAR100SSL(root='data', train=False)
+    test_dataset = CIFAR100SSL(root=args.root, train=False)
     
     return train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset
 
-def get_svhn(num_label):    
-    trainset = torchvision.datasets.SHVN(root='data', split="train", download=True)
-    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.labels, num_label, 10)
+def get_svhn(args):    
+    trainset = torchvision.datasets.SHVN(root=args.root, split="train", download=True)
+    labeled_idx, unlabeled_idx, valid_idx = split_label_unlabel_valid(trainset.labels, args.num_labels, 10)
     
-    train_labeled_dataset = SVHNSSL( root="data", indexs=labeled_idx)
+    train_labeled_dataset = SVHNSSL( root=args.root, indexs=labeled_idx)
 
-    train_unlabeled_dataset = SVHNSSL(root="data", indexs=unlabeled_idx, is_labeled=False)
+    train_unlabeled_dataset = SVHNSSL(root=args.root, indexs=unlabeled_idx, is_labeled=False)
     
-    valid_dataset = CIFAR10SSL(root="data", indexs=valid_idx, is_valid=True)
+    valid_dataset = CIFAR10SSL(root=args.root, indexs=valid_idx, is_valid=True)
     
-    test_dataset = SVHNSSL(root='data', split="test")
+    test_dataset = SVHNSSL(root=args.root, split="test")
     
     return train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset
 
-def get_stl10(fold=0):
-    train_labeled_dataset = STL10SSL(root='data', folds=fold)
+def get_stl10(args):
+    train_labeled_dataset = STL10SSL(root=args.root, folds=args.fold)
     
-    train_unlabeled_dataset = STL10SSL(root='data', split="unlabeled")
+    train_unlabeled_dataset = STL10SSL(root=args.root, split="unlabeled")
     
-    valid_dataset = STL10SSL(root='data', folds=(fold+1)%10)
+    valid_dataset = STL10SSL(root=args.root, folds=(args.fold+1)%10)
     
-    test_dataset = STL10SSL(root='data', split="test")
+    test_dataset = STL10SSL(root=args.root, split="test")
     
     return train_labeled_dataset, train_unlabeled_dataset, valid_dataset, test_dataset
 
