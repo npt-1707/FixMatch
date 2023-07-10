@@ -119,7 +119,7 @@ class FixMatch:
         self.args = args
         self.device = torch.device(
             "cuda" if torch.cuda.is_available() else "cpu")
-        self.train_label_dataloader, self.train_unlabel_dataloader, self.valid_dataloader, self.test_dataloader = get_dataloader(
+        self.train_labeled_dataloader, self.train_unlabeled_dataloader, self.valid_dataloader, self.test_dataloader = get_dataloader(
             args)
         # assert len(self.train_label_dataloader) == len(
         #     self.train_unlabel_dataloader
@@ -185,18 +185,18 @@ class FixMatch:
             total_loss = []
             label_loss = []
             unlabel_loss = []
-            for batch_idx in range(self.args.eval_step):
+            for batch_idx in range(self.args.eval_steps):
                 try:
-                    l_img, label = labeled_iter.next()
+                    l_img, label = next(labeled_iter)
                 except:
-                    labeled_iter = iter(self.train_labeled_loader)
-                    l_img, label = labeled_iter.next()
+                    labeled_iter = iter(self.train_labeled_dataloader)
+                    l_img, label = next(labeled_iter)
 
                 try:
-                    u_w_img, u_s_img = unlabeled_iter.next()
+                    u_w_img, u_s_img = next(unlabeled_iter)
                 except:
-                    unlabeled_iter = iter(self.train_unlabeled_loader)
-                    (inputs_u_w, inputs_u_s), _ = unlabeled_iter.next()
+                    unlabeled_iter = iter(self.train_unlabeled_dataloader)
+                    u_w_img, u_s_img = next(unlabeled_iter)
             # for idx, ((l_img, label), (u_w_img, u_s_img)) in enumerate(
             #         zip(self.train_label_dataloader,
             #             self.train_unlabel_dataloader)):
