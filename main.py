@@ -55,7 +55,7 @@ parser.add_argument("--root",
                     default="data",
                     help="root data directory")
 parser.add_argument("--save", type=str, default="save", help="save path")
-
+parser.add_argument("--debug", type=bool, default=False, help="debug mode")
 args = parser.parse_args()
 
 if args.seed > 0:
@@ -81,9 +81,11 @@ def set_logger(log_path):
         stream_handler.setFormatter(logging.Formatter('%(message)s'))
         logger.addHandler(stream_handler)
 
+
 set_logger(f'{args.save}/{args.dataset}_{args.num_labels}_training.log')
 
 logging.info(args)
+print(args) if args.debug else None
 fixmatch = FixMatch(args)
 fixmatch.train()
 fixmatch.validate()

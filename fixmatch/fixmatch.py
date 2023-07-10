@@ -138,12 +138,14 @@ class FixMatch:
             self.valid_loss = checkpoint["valid_loss"]
         size = len(self.train_label_dataloader)
         logging.info("Start training" if self.epoch == 0 else "Continue training")
+        print("Start training" if self.epoch == 0 else "Continue training") if self.args.debug else None
         self.train_loss = []
         self.valid_loss = []
         for epoch in range(self.epoch, self.args.epochs):
             logging.info(f"Epoch {epoch+1}/{self.args.epochs}")
             logging.info(
                 f"Learning rate: {self.optimizer.param_groups[0]['lr']}")
+            print(f"Epochs: {epoch+1}/{self.args.epochs}\nLearning rate: {self.optimizer.param_groups[0]['lr']}") if self.args.debug else None
             total_loss = []
             label_loss = []
             unlabel_loss = []
@@ -174,10 +176,14 @@ class FixMatch:
                     logging.info(
                         f"\tBatch: {idx}/{size} - Loss: {loss.item():.6f} - Label Loss: {l_loss.item():.6f} - Pseudo Loss: {u_loss.item():.6f}"
                     )
+                    print(
+                        f"\tBatch: {idx}/{size} - Loss: {loss.item():.6f} - Label Loss: {l_loss.item():.6f} - Pseudo Loss: {u_loss.item():.6f}"
+                    ) if self.args.debug else None
                 self.optimizer.step()
                 self.scheduler.step()
                 self.ema_model.update(self.model)
             logging.info(f"Train loss: {sum(total_loss) / len(total_loss)}")
+            print(f"Train loss: {sum(total_loss) / len(total_loss)}") if self.args.debug else None
             self.train_loss.append(sum(total_loss) / len(total_loss))
             self.valid_loss.append(self.validate())
             if (epoch + 1) % 50 == 0:
@@ -198,6 +204,7 @@ class FixMatch:
             if epoch == self.args.epochs - 1:
                 self.test()
         logging.info('Training completed.')
+        print("Training completed") if self.args.debug else None
 
     def validate(self):
         logging.info("Validating")
@@ -217,6 +224,8 @@ class FixMatch:
         acc = correct / total
         total_loss /= len(self.test_dataloader)
         logging.info(f"Accuracy: {acc:.6f} - Loss: {total_loss:.6f}")
+        print(f"Validating: Accuracy: {acc:.6f} - Loss: {total_loss:.6f}"
+              ) if self.args.debug else None
         if acc > self.best_acc:
             self.best_acc = acc
             self.best_model = self.model.state_dict()
@@ -240,3 +249,5 @@ class FixMatch:
         acc = correct / total
         total_loss /= len(self.test_dataloader)
         logging.info(f"Accuracy: {acc:.6f} - Loss: {total_loss:.6f}")
+        print(f"Testing: Accuracy: {acc:.6f} - Loss: {total_loss:.6f}"
+              ) if self.args.debug else None
