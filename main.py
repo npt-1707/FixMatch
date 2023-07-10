@@ -31,7 +31,7 @@ parser.add_argument("--num_workers",
                     type=int,
                     default=4,
                     help="number of workers")
-parser.add_argument("--epochs", type=int, default=300, help="number of epochs")
+parser.add_argument("--epochs", type=int, default=1024, help="number of epochs")
 parser.add_argument("--lr", type=float, default=0.03, help="learning rate")
 parser.add_argument("--momentum", type=float, default=0.9, help="momentum")
 parser.add_argument("--wd", type=float, default=0.0001, help="weight decay")
@@ -56,6 +56,10 @@ parser.add_argument("--root",
                     help="root data directory")
 parser.add_argument("--save", type=str, default="save", help="save path")
 parser.add_argument("--debug", type=bool, default=False, help="debug mode")
+parser.add_argument('--total-steps', default=2**20, type=int,
+                        help='number of total steps to run')
+parser.add_argument('--eval-steps', default=1024, type=int,
+                        help='number of eval steps to run')
 args = parser.parse_args()
 
 if args.seed > 0:

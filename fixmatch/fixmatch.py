@@ -63,15 +63,44 @@ def get_model(args):
     }
     models = {
         "pretrained": {
-            "resnet50": [resnet50, {"weights":ResNet50_Weights.DEFAULT}],
-            "wide_resnet50_2": [wide_resnet50_2, {"weights": Wide_ResNet50_2_Weights.DEFAULT}],
-            "wide_resnet101_2": [wide_resnet101_2, {"weights": Wide_ResNet101_2_Weights.DEFAULT}],
+            "resnet50": [resnet50, {
+                "weights": ResNet50_Weights.DEFAULT
+            }],
+            "wide_resnet50_2":
+            [wide_resnet50_2, {
+                "weights": Wide_ResNet50_2_Weights.DEFAULT
+            }],
+            "wide_resnet101_2":
+            [wide_resnet101_2, {
+                "weights": Wide_ResNet101_2_Weights.DEFAULT
+            }],
         },
         "defined": {
-            "resnet50": [ResNet50, {"num_classes": out_features[args.dataset]}],
-            "wide_resnet28_2": [WideResNet, {"depth": 28, "widen_factor": 2, "num_classes": out_features[args.dataset]}],
-            "wide_resnet28_4": [WideResNet, {"depth": 28, "widen_factor": 4, "num_classes": out_features[args.dataset]}],
-            "wide_resnet34_2": [WideResNet, {"depth": 34, "widen_factor": 2, "num_classes": out_features[args.dataset]}],
+            "resnet50":
+            [ResNet50, {
+                "num_classes": out_features[args.dataset]
+            }],
+            "wide_resnet28_2": [
+                WideResNet, {
+                    "depth": 28,
+                    "widen_factor": 2,
+                    "num_classes": out_features[args.dataset]
+                }
+            ],
+            "wide_resnet28_4": [
+                WideResNet, {
+                    "depth": 28,
+                    "widen_factor": 4,
+                    "num_classes": out_features[args.dataset]
+                }
+            ],
+            "wide_resnet34_2": [
+                WideResNet, {
+                    "depth": 34,
+                    "widen_factor": 2,
+                    "num_classes": out_features[args.dataset]
+                }
+            ],
         }
     }
     load = models[args.pretrained]
@@ -82,6 +111,7 @@ def get_model(args):
         out_feat = out_features[args.dataset]
         model.fc = torch.nn.Linear(in_feat, out_feat)
     return model
+
 
 class FixMatch:
 
@@ -100,13 +130,12 @@ class FixMatch:
                              momentum=args.momentum,
                              weight_decay=args.wd,
                              nesterov=args.nesterov)
-        self.scheduler = WarmupCosineLrScheduler(
-            self.optimizer,
-            args.epochs * len(self.train_label_dataloader),
-            args.warmup * len(self.train_label_dataloader),
-            warmup_ratio=0.1,
-            warmup='linear',
-            last_epoch=-1)
+        self.scheduler = WarmupCosineLrScheduler(self.optimizer,
+                                                 args.total_steps,
+                                                 args.warmup * args.eval_steps,
+                                                 warmup_ratio=0.1,
+                                                 warmup='linear',
+                                                 last_epoch=-1)
         self.ema_model = ModelEMA(self.device, self.model, args.ema_decay)
         self.criterion = CrossEntropyLoss()
         self.best_acc = 0.0
@@ -119,7 +148,8 @@ class FixMatch:
     def train(self):
         logging.info("Loading checkpoint")
         checkpoints = [
-            x for x in os.listdir(self.save_path) if f"{self.args.dataset}_{self.args.num_labels}_checkpoint" in x
+            x for x in os.listdir(self.save_path)
+            if f"{self.args.dataset}_{self.args.num_labels}_checkpoint" in x
         ]
         logging.info(f"Found {len(checkpoints)} checkpoints: {checkpoints}")
         if len(checkpoints) > 0:
@@ -136,22 +166,40 @@ class FixMatch:
             self.epoch = checkpoint["epoch"]
             self.train_loss = checkpoint["train_loss"]
             self.valid_loss = checkpoint["valid_loss"]
-        size = len(self.train_label_dataloader)
-        logging.info("Start training" if self.epoch == 0 else "Continue training")
-        print("Start training" if self.epoch == 0 else "Continue training") if self.args.debug else None
+        logging.info("Start training" if self.epoch ==
+                     0 else "Continue training")
+        print("Start training" if self.epoch ==
+              0 else "Continue training") if self.args.debug else None
         self.train_loss = []
         self.valid_loss = []
+
+        labeled_iter = iter(self.train_labeled_loader)
+        unlabeled_iter = iter(self.train_unlabeled_loader)
         for epoch in range(self.epoch, self.args.epochs):
             logging.info(f"Epoch {epoch+1}/{self.args.epochs}")
             logging.info(
                 f"Learning rate: {self.optimizer.param_groups[0]['lr']}")
-            print(f"Epochs: {epoch+1}/{self.args.epochs}\nLearning rate: {self.optimizer.param_groups[0]['lr']}") if self.args.debug else None
+            print(
+                f"Epochs: {epoch+1}/{self.args.epochs}\nLearning rate: {self.optimizer.param_groups[0]['lr']}"
+            ) if self.args.debug else None
             total_loss = []
             label_loss = []
             unlabel_loss = []
-            for idx, ((l_img, label), (u_w_img, u_s_img)) in enumerate(
-                    zip(self.train_label_dataloader,
-                        self.train_unlabel_dataloader)):
+            for batch_idx in range(self.args.eval_step):
+                try:
+                    l_img, label = labeled_iter.next()
+                except:
+                    labeled_iter = iter(self.train_labeled_loader)
+                    l_img, label = labeled_iter.next()
+
+                try:
+                    u_w_img, u_s_img = unlabeled_iter.next()
+                except:
+                    unlabeled_iter = iter(self.train_unlabeled_loader)
+                    (inputs_u_w, inputs_u_s), _ = unlabeled_iter.next()
+            # for idx, ((l_img, label), (u_w_img, u_s_img)) in enumerate(
+            #         zip(self.train_label_dataloader,
+            #             self.train_unlabel_dataloader)):
                 l_img, label, u_w_img, u_s_img = l_img.to(
                     self.device), label.to(self.device), u_w_img.to(
                         self.device), u_s_img.to(self.device)
@@ -172,18 +220,19 @@ class FixMatch:
                 label_loss.append(l_loss.item())
                 unlabel_loss.append(u_loss.item())
                 #print loss
-                if idx % int(size/5) == 0:
+                if batch_idx % int(self.args.eval_steps / 5) == 0:
                     logging.info(
-                        f"\tBatch: {idx}/{size} - Loss: {loss.item():.6f} - Label Loss: {l_loss.item():.6f} - Pseudo Loss: {u_loss.item():.6f}"
+                        f"\tBatch: {batch_idx}/{self.args.eval_steps} - Loss: {loss.item():.6f} - Label Loss: {l_loss.item():.6f} - Pseudo Loss: {u_loss.item():.6f}"
                     )
                     print(
-                        f"\tBatch: {idx}/{size} - Loss: {loss.item():.6f} - Label Loss: {l_loss.item():.6f} - Pseudo Loss: {u_loss.item():.6f}"
+                        f"\tBatch: {batch_idx}/{self.args.eval_steps} - Loss: {loss.item():.6f} - Label Loss: {l_loss.item():.6f} - Pseudo Loss: {u_loss.item():.6f}"
                     ) if self.args.debug else None
                 self.optimizer.step()
                 self.scheduler.step()
                 self.ema_model.update(self.model)
             logging.info(f"Train loss: {sum(total_loss) / len(total_loss)}")
-            print(f"Train loss: {sum(total_loss) / len(total_loss)}") if self.args.debug else None
+            print(f"Train loss: {sum(total_loss) / len(total_loss)}"
+                  ) if self.args.debug else None
             self.train_loss.append(sum(total_loss) / len(total_loss))
             self.valid_loss.append(self.validate())
             if (epoch + 1) % 50 == 0:
@@ -200,7 +249,10 @@ class FixMatch:
                 }
                 torch.save(
                     save,
-                    "{}/{}_{}_checkpoint_{}".format(self.save_path, self.args.dataset, self.args.num_labels, epoch+1))
+                    "{}/{}_{}_checkpoint_{}".format(self.save_path,
+                                                    self.args.dataset,
+                                                    self.args.num_labels,
+                                                    epoch + 1))
             if epoch == self.args.epochs - 1:
                 self.test()
         logging.info('Training completed.')
