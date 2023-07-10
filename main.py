@@ -1,6 +1,7 @@
 from fixmatch.fixmatch import FixMatch
 import torch, random, numpy as np
 import argparse
+import logging
 
 parser = argparse.ArgumentParser(description='FixMatch Training')
 availabel_dataset = ["cifar10", "cifar100", "svhn", "stl10"]
@@ -8,6 +9,8 @@ parser.add_argument("--dataset",
                     type=str,
                     default="cifar10",
                     help="dataset name")
+parser.add_argument("arch", type=str, default="resnet50", help="model architecture")
+parser.add_argument("pretrained", type=str, default="pretrained", help="model trained")
 parser.add_argument("--num_labels",
                     type=int,
                     default=400,
@@ -46,6 +49,7 @@ parser.add_argument("--root",
                     default="data",
                     help="root data directory")
 parser.add_argument("--save", type=str, default="save", help="save path")
+
 args = parser.parse_args()
 
 if args.seed > 0:
@@ -54,8 +58,13 @@ if args.seed > 0:
     np.random.seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
-args.arch = "resnet50"
+logging.basicConfig(filename=f'{args.save}/{args.dataset}_{args.num_labels}_training.log',
+                    level=logging.INFO,
+                    format='%(asctime)s %(levelname)s: %(message)s')
+
+logging.info(args)
 fixmatch = FixMatch(args)
 fixmatch.train()
 fixmatch.validate()
 fixmatch.test()
+logging.shutdown()

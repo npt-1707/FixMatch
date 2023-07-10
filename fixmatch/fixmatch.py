@@ -2,13 +2,15 @@ import torch, math, os, logging
 from torch.utils.data import DataLoader
 from torch.optim import SGD
 from torch.nn import CrossEntropyLoss
+import torch.nn.functional as F
 from torch.utils.data import RandomSampler, BatchSampler, DataLoader
-from torch.optim.lr_scheduler import LambdaLR
-from torchvision.models import resnet50, ResNet50_Weights, wide_resnet50_2, Wide_ResNet50_2_Weights
+from torchvision.models import resnet50, ResNet50_Weights, wide_resnet50_2, Wide_ResNet50_2_Weights, wide_resnet101_2, Wide_ResNet101_2_Weights
 
 from fixmatch.dataset import get_cifar10, get_cifar100, get_svhn, get_stl10
 from fixmatch.ema import ModelEMA
 from fixmatch.lr_scheduler import WarmupCosineLrScheduler
+from model.resnet import ResNet50
+from model.widen_resnet import WideResNet
 
 
 def get_dataloader(args):
@@ -59,30 +61,27 @@ def get_model(args):
         "svhn": 10,
         "stl10": 10,
     }
-    if args.arch == "resnet50":
-        model = resnet50(weights=ResNet50_Weights.IMAGENET1K_V1)
-    else:
-        model = wide_resnet50_2(weights=Wide_ResNet50_2_Weights.DEFAULT)
-    num_features = model.fc.in_features
-    model.fc = torch.nn.Linear(num_features, out_features[args.dataset])
+    models = {
+        "pretrained": {
+            "resnet50": [resnet50, {"weights":ResNet50_Weights.DEFAULT}],
+            "wide_resnet50_2": [wide_resnet50_2, {"weights": Wide_ResNet50_2_Weights.DEFAULT}],
+            "wide_resnet101_2": [wide_resnet101_2, {"weights": Wide_ResNet101_2_Weights.DEFAULT}],
+        },
+        "defined": {
+            "resnet50": [ResNet50, {"num_classes": out_features[args.dataset]}],
+            "wide_resnet28_2": [WideResNet, {"depth": 28, "widen_factor": 2, "num_classes": out_features[args.dataset]}],
+            "wide_resnet28_4": [WideResNet, {"depth": 28, "widen_factor": 4, "num_classes": out_features[args.dataset]}],
+            "wide_resnet34_2": [WideResNet, {"depth": 34, "widen_factor": 2, "num_classes": out_features[args.dataset]}],
+        }
+    }
+    load = models[args.pretrained]
+    model_name, model_params = load[args.arch]
+    model = model_name(**model_params)
+    if args.pretrained == "pretrained":
+        in_feat = model.fc.in_features
+        out_feat = out_features[args.dataset]
+        model.fc = torch.nn.Linear(in_feat, out_feat)
     return model
-
-
-# def get_cosine_schedule_with_warmup(optimizer,
-#                                     num_warmup_steps,
-#                                     num_training_steps,
-#                                     num_cycles=7. / 16.,
-#                                     last_epoch=-1):
-
-#     def _lr_lambda(current_step):
-#         if current_step < num_warmup_steps:
-#             return float(current_step) / float(max(1, num_warmup_steps))
-#         no_progress = float(current_step - num_warmup_steps) / \
-#             float(max(1, num_training_steps - num_warmup_steps))
-#         return max(0., math.cos(math.pi * num_cycles * no_progress))
-
-#     return LambdaLR(optimizer, _lr_lambda, last_epoch)
-
 
 class FixMatch:
 
@@ -114,19 +113,15 @@ class FixMatch:
         self.best_model = None
         self.epoch = 0
         self.save_path = args.save
-        if not os.path.exists(self.save_path):
-            os.makedirs(self.save_path)
+        if not os.path.isdir(self.save_path):
+            os.mkdir(self.save_path)
 
     def train(self):
-        logging.basicConfig(filename=f'save/{self.args.dataset}_training.log',
-                            level=logging.INFO,
-                            format='%(asctime)s %(levelname)s: %(message)s')
         logging.info("Loading checkpoint")
         checkpoints = [
-            x for x in os.listdir(self.save_path) if "checkpoint" in x
-            and self.args.dataset in x and x.startswith(self.args.arch)
+            x for x in os.listdir(self.save_path) if f"{self.args.dataset}_{self.num_labels}_checkpoint" in x
         ]
-        logging.info(f"Found {len(checkpoints)} checkpoint {checkpoints}")
+        logging.info(f"Found {len(checkpoints)} checkpoints: {checkpoints}")
         if len(checkpoints) > 0:
             checkpoints = sorted(
                 checkpoints, key=lambda x: int(x.split("_")[-1].split(".")[0]))
@@ -136,51 +131,56 @@ class FixMatch:
             self.ema_model.ema.load_state_dict(checkpoint["ema"])
             self.optimizer.load_state_dict(checkpoint["optimizer"])
             self.scheduler.load_state_dict(checkpoint["scheduler"])
-            self.best_acc = checkpoint["acc"]
-            # self.best_model = checkpoint["model"]
+            self.best_acc = checkpoint["best_acc"]
+            self.best_model = checkpoint["model"]
             self.epoch = checkpoint["epoch"]
             self.train_loss = checkpoint["train_loss"]
             self.valid_loss = checkpoint["valid_loss"]
         size = len(self.train_label_dataloader)
-        logging.info("Start training")
+        logging.info("Start training" if self.epoch == 0 else "Continue training")
         self.train_loss = []
         self.valid_loss = []
         for epoch in range(self.epoch, self.args.epochs):
             logging.info(f"Epoch {epoch+1}/{self.args.epochs}")
+            logging.info(
+                f"Learning rate: {self.optimizer.param_groups[0]['lr']}")
             total_loss = []
             label_loss = []
-            pseudo_loss = []
-            for idx, ((img, label), (w_img, s_img)) in enumerate(
+            unlabel_loss = []
+            for idx, ((l_img, label), (u_w_img, u_s_img)) in enumerate(
                     zip(self.train_label_dataloader,
                         self.train_unlabel_dataloader)):
-                img, label, w_img, s_img = img.to(self.device), label.to(
-                    self.device), w_img.to(self.device), s_img.to(self.device)
-                logit = self.model(img)
-                loss_l = self.criterion(logit, label)
-                w_logit = self.model(w_img)
-                w_prob = torch.softmax(w_logit / self.args.T, dim=1)
-                pseudo_label = w_prob.ge(self.args.threshold).float()
-                s_logit = self.model(s_img)
-                loss_u = self.criterion(s_logit, pseudo_label)
-                loss = loss_l + self.args.wu * loss_u
+                l_img, label, u_w_img, u_s_img = l_img.to(
+                    self.device), label.to(self.device), u_w_img.to(
+                        self.device), u_s_img.to(self.device)
+                l_logit = self.model(l_img)
+                l_loss = F.cross_entropy(l_logit, label, reduction="mean")
+                u_w_logit = self.model(u_w_img)
+                pseudo_label = torch.softmax(u_w_logit / self.args.T, dim=-1)
+                max_probs, pred_u_w = torch.max(pseudo_label, dim=-1)
+                mask = max_probs.ge(self.args.threshold).float()
+                u_s_logit = self.model(u_s_img)
+                u_loss = F.cross_entropy(u_s_logit, pred_u_w,
+                                         reduction="none").mul(mask).mean()
+                loss = l_loss + self.args.wu * u_loss
 
                 self.optimizer.zero_grad()
                 loss.backward()
                 total_loss.append(loss.item())
-                label_loss.append(loss_l.item())
-                pseudo_loss.append(loss_u.item())
+                label_loss.append(l_loss.item())
+                unlabel_loss.append(u_loss.item())
                 #print loss
-                if idx % 30 == 0:
+                if idx % int(size/5) == 0:
                     logging.info(
-                        f"\tBatch: {idx}/{size} - Loss: {loss.item():.6f} - Label Loss: {loss_l.item():.6f} - Pseudo Loss: {loss_u.item():.6f}"
+                        f"\tBatch: {idx}/{size} - Loss: {loss.item():.6f} - Label Loss: {l_loss.item():.6f} - Pseudo Loss: {u_loss.item():.6f}"
                     )
                 self.optimizer.step()
                 self.scheduler.step()
                 self.ema_model.update(self.model)
+            logging.info(f"Train loss: {sum(total_loss) / len(total_loss)}")
             self.train_loss.append(sum(total_loss) / len(total_loss))
             self.valid_loss.append(self.validate())
-            if (epoch + 1) % 30 == 0 or epoch == self.args.epochs - 1:
-                self.test()
+            if (epoch + 1) % 50 == 0:
                 save = {
                     "model": self.model.state_dict(),
                     "ema": self.ema_model.ema.state_dict(),
@@ -193,13 +193,11 @@ class FixMatch:
                     "valid_loss": self.valid_loss,
                 }
                 torch.save(
-                    save, "{}/{}_{}_checkpoint_{}.pth".format(
-                        self.save_path, self.args.arch, self.args.dataset,
-                        epoch))
+                    save,
+                    "{}/{}_{}_checkpoint_{}".format(self.save_path, self.args.dataset, self.args.num_labels, epoch+1))
             if epoch == self.args.epochs - 1:
                 self.test()
         logging.info('Training completed.')
-        logging.shutdown()
 
     def validate(self):
         logging.info("Validating")
@@ -242,6 +240,3 @@ class FixMatch:
         acc = correct / total
         total_loss /= len(self.test_dataloader)
         logging.info(f"Accuracy: {acc:.6f} - Loss: {total_loss:.6f}")
-
-    def save(self, path):
-        torch.save(self.best_model, path)
