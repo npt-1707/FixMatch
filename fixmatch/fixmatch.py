@@ -121,9 +121,9 @@ class FixMatch:
             "cuda" if torch.cuda.is_available() else "cpu")
         self.train_label_dataloader, self.train_unlabel_dataloader, self.valid_dataloader, self.test_dataloader = get_dataloader(
             args)
-        assert len(self.train_label_dataloader) == len(
-            self.train_unlabel_dataloader
-        ), f"Number of labeled and unlabeled dataloader must be equal. Got {len(self.train_label_dataloader)} {len(self.train_unlabel_dataloader)}"
+        # assert len(self.train_label_dataloader) == len(
+        #     self.train_unlabel_dataloader
+        # ), f"Number of labeled and unlabeled dataloader must be equal. Got {len(self.train_label_dataloader)} {len(self.train_unlabel_dataloader)}"
         self.model = get_model(args).to(self.device)
         self.optimizer = SGD(self.model.parameters(),
                              lr=args.lr,
@@ -173,8 +173,8 @@ class FixMatch:
         self.train_loss = []
         self.valid_loss = []
 
-        labeled_iter = iter(self.train_labeled_loader)
-        unlabeled_iter = iter(self.train_unlabeled_loader)
+        labeled_iter = iter(self.train_labeled_dataloader)
+        unlabeled_iter = iter(self.train_unlabeled_dataloader)
         for epoch in range(self.epoch, self.args.epochs):
             logging.info(f"Epoch {epoch+1}/{self.args.epochs}")
             logging.info(
