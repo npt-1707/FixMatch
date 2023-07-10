@@ -9,8 +9,14 @@ parser.add_argument("--dataset",
                     type=str,
                     default="cifar10",
                     help="dataset name")
-parser.add_argument("arch", type=str, default="resnet50", help="model architecture")
-parser.add_argument("pretrained", type=str, default="pretrained", help="model trained")
+parser.add_argument("--arch",
+                    type=str,
+                    default="resnet50",
+                    help="model architecture")
+parser.add_argument("--pretrained",
+                    type=str,
+                    default="pretrained",
+                    help="model trained")
 parser.add_argument("--num_labels",
                     type=int,
                     default=400,
@@ -58,9 +64,24 @@ if args.seed > 0:
     np.random.seed(args.seed)
     torch.backends.cudnn.deterministic = True
 
-logging.basicConfig(filename=f'{args.save}/{args.dataset}_{args.num_labels}_training.log',
-                    level=logging.INFO,
-                    format='%(asctime)s %(levelname)s: %(message)s')
+
+def set_logger(log_path):
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+
+    if not logger.handlers:
+        # Logging to a file
+        file_handler = logging.FileHandler(log_path)
+        file_handler.setFormatter(
+            logging.Formatter('%(asctime)s:%(levelname)s: %(message)s'))
+        logger.addHandler(file_handler)
+
+        # Logging to console
+        stream_handler = logging.StreamHandler()
+        stream_handler.setFormatter(logging.Formatter('%(message)s'))
+        logger.addHandler(stream_handler)
+
+set_logger(f'{args.save}/{args.dataset}_{args.num_labels}_training.log')
 
 logging.info(args)
 fixmatch = FixMatch(args)

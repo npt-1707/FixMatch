@@ -119,7 +119,7 @@ class FixMatch:
     def train(self):
         logging.info("Loading checkpoint")
         checkpoints = [
-            x for x in os.listdir(self.save_path) if f"{self.args.dataset}_{self.num_labels}_checkpoint" in x
+            x for x in os.listdir(self.save_path) if f"{self.args.dataset}_{self.args.num_labels}_checkpoint" in x
         ]
         logging.info(f"Found {len(checkpoints)} checkpoints: {checkpoints}")
         if len(checkpoints) > 0:
